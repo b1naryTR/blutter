@@ -25,7 +25,8 @@ DartField::DartField(const DartClass& cls_, dart::FieldPtr ptr_) : cls(cls_), ty
 }
 
 DartField::DartField(const DartClass& cls, uint32_t offset, DartAbstractType* type, std::string name) :
-	cls(cls), type(type), name(std::move(name)), offset(offset), is_static(false), is_late(false), is_final(false), is_const(false)
+	cls(cls), type(type), ptr(nullptr), typePtr(nullptr), name(std::move(name)), offset(offset),
+	is_static(false), is_late(false), is_final(false), is_const(false)
 {
 }
 
@@ -34,8 +35,7 @@ void DartField::Print(std::ostream& of) const
 	of << "  ";
 	if (ptr == nullptr) {
 		// use concrete type
-		ASSERT(type);
-		of << type->ToString();
+		of << (type == nullptr ? "dynamic" : type->ToString());
 		of << std::format(" field_{:x};\n", offset);
 	}
 	else {
