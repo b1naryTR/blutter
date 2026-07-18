@@ -84,6 +84,9 @@ set(defines ${target_arch} ${target_os}
 	PRODUCT U_USING_ICU_NAMESPACE=0
 	_HAS_EXCEPTIONS=0 DART_TARGET_OS_WINDOWS_UWP
 )
+if (SHOREBIRD)
+	list(APPEND defines DART_SHOREBIRD)
+endif()
 # Dart header can detect DART_HOST_OS_xxx value
 
 if (MSVC)

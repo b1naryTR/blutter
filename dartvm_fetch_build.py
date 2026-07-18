@@ -15,6 +15,7 @@ SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 CMAKE_TEMPLATE_FILE = os.path.join(SCRIPT_DIR, 'scripts', 'CMakeLists.txt')
 CREATE_SRCLIST_FILE = os.path.join(SCRIPT_DIR, 'scripts', 'dartvm_create_srclist.py')
 MAKE_VERSION_FILE = os.path.join(SCRIPT_DIR, 'scripts', 'dartvm_make_version.py')
+PATCH_SHOREBIRD_FILE = os.path.join(SCRIPT_DIR, 'scripts', 'dartvm_patch_shorebird.py')
 
 SDK_DIR = os.path.join(SCRIPT_DIR, 'dartsdk')
 BUILD_DIR = os.path.join(SCRIPT_DIR, 'build')
@@ -34,11 +35,13 @@ def load_source(modname, filename):
 """
 
 class DartLibInfo:
-    def __init__(self, version: str, os_name: str, arch: str, has_compressed_ptrs = None, snapshot_hash = None):
+    def __init__(self, version: str, os_name: str, arch: str, has_compressed_ptrs = None,
+                 snapshot_hash = None, is_shorebird = False):
         self.version = version
         self.os_name = os_name
         self.arch = arch
         self.snapshot_hash = snapshot_hash
+        self.is_shorebird = is_shorebird
         if has_compressed_ptrs is None:
             # use same as flutter default configuration
             # TODO: old Dart version has no pointer compression
@@ -48,7 +51,8 @@ class DartLibInfo:
         snapshot_identity = snapshot_hash if snapshot_hash is not None else 'default'
         snapshot_key = hashlib.sha256(snapshot_identity.encode('utf-8')).hexdigest()[:16]
         pointer_key = 'compressed' if self.has_compressed_ptrs else 'uncompressed'
-        self.lib_suffix = f'_{pointer_key}_{snapshot_key}'
+        engine_key = '_shorebird' if self.is_shorebird else ''
+        self.lib_suffix = f'{engine_key}_{pointer_key}_{snapshot_key}'
         self.lib_name = f'dartvm{version}_{os_name}_{arch}{self.lib_suffix}'
 
 
@@ -115,6 +119,11 @@ def checkout_dart(info: DartLibInfo):
     # matching build; the compiled-library cache is keyed by this hash below.
     if info.snapshot_hash is not None:
         subprocess.run([sys.executable, MAKE_VERSION_FILE, clonedir, info.snapshot_hash], check=True)
+    if info.is_shorebird:
+        # Shorebird AOT snapshots serialize one additional class-table bound.
+        # Keep the source change behind a build define so this shared checkout
+        # remains safe for ordinary Flutter builds of the same Dart version.
+        subprocess.run([sys.executable, PATCH_SHOREBIRD_FILE, clonedir], check=True)
         
     if sys.platform == 'win32':
         # since Dart 3.8, RUNTIME_FUNCTION is declared when DART_HOST_OS_WINDOWS and TARGET_ARCH_ARM64 are set
@@ -170,6 +179,7 @@ def cmake_dart(info: DartLibInfo, target_dir: str):
     builddir = os.path.join(BUILD_DIR, info.lib_name)
     subprocess.run([CMAKE_CMD, '-GNinja', '-B', builddir, f'-DTARGET_OS={info.os_name}', f'-DTARGET_ARCH={info.arch}',
         f'-DLIB_NAME_SUFFIX={info.lib_suffix}',
+        f'-DSHOREBIRD={1 if info.is_shorebird else 0}',
         f'-DCOMPRESSED_PTRS={1 if info.has_compressed_ptrs else 0}', '-DCMAKE_BUILD_TYPE=Release', '--log-level=NOTICE'], 
         cwd=target_dir, check=True)
     

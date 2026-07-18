@@ -11,6 +11,26 @@ from elftools.elf.elffile import ELFFile
 from elftools.elf.enums import ENUM_E_MACHINE 
 from elftools.elf.sections import SymbolTableSection
 
+SHOREBIRD_SYMBOLS = (b'shorebird_init', b'shorebird_update')
+
+
+def has_shorebird_markers(data: bytes) -> bool:
+    return all(marker in data for marker in SHOREBIRD_SYMBOLS)
+
+
+def is_shorebird_engine(libflutter_file: str) -> bool:
+    with open(libflutter_file, 'rb') as f:
+        elf = ELFFile(f)
+        dynstr = elf.get_section_by_name('.dynstr')
+        if dynstr is not None and has_shorebird_markers(dynstr.data()):
+            return True
+
+        # Retain a fallback for engines which hide the updater exports but
+        # still carry Shorebird's diagnostic strings in read-only data.
+        rodata = elf.get_section_by_name('.rodata')
+        return rodata is not None and b'Print shorebird information' in rodata.data()
+
+
 # TODO: support both ELF and Mach-O file
 def extract_snapshot_hash_flags(libapp_file):
     with open(libapp_file, 'rb') as f:

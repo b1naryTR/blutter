@@ -53,7 +53,7 @@ Extract "lib" directory from apk file
 ```
 python3 blutter.py path/to/app/lib/arm64-v8a out_dir
 ```
-The blutter.py will automatically detect the Dart version from the flutter engine and call executable of blutter to get the information from libapp.so.
+The blutter.py will automatically detect the Dart version from the Flutter engine and call the matching Blutter executable to get information from libapp.so. Shorebird engines are detected separately and use their compatible class-table snapshot reader without changing ordinary Flutter builds.
 
 If the blutter executable for required Dart version does not exists, the script will automatically checkout Dart source code and compiling it.
 

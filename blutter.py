@@ -156,13 +156,16 @@ def cmake_blutter(input: BlutterInput):
 
 def get_dart_lib_info(libapp_path: str, libflutter_path: str) -> DartLibInfo:
     # getting dart version
-    from extract_dart_info import extract_dart_info
+    from extract_dart_info import extract_dart_info, is_shorebird_engine
     dart_version, snapshot_hash, flags, arch, os_name = extract_dart_info(libapp_path, libflutter_path)
+    is_shorebird = is_shorebird_engine(libflutter_path)
     print(f'Dart version: {dart_version}, Snapshot: {snapshot_hash}, Target: {os_name} {arch}')
     print('flags: ' + ' '.join(flags))
+    if is_shorebird:
+        print('engine: Shorebird')
 
     has_compressed_ptrs = 'compressed-pointers' in flags
-    return DartLibInfo(dart_version, os_name, arch, has_compressed_ptrs, snapshot_hash)
+    return DartLibInfo(dart_version, os_name, arch, has_compressed_ptrs, snapshot_hash, is_shorebird)
 
 def build_and_run(input: BlutterInput):
     if not os.path.isfile(input.blutter_file) or input.rebuild_blutter:
