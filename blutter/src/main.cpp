@@ -5,6 +5,7 @@
 #include "FridaWriter.h"
 #include "args.hxx"
 #include <filesystem>
+#include <fstream>
 
 int main(int argc, char** argv)
 {
@@ -25,6 +26,16 @@ int main(int argc, char** argv)
 			std::cerr << "Failed to create output directory: " << ec.message() << "\n";
 			return 1;
 		}
+		auto writePhase = [&outDir](const char* phase) {
+			std::ofstream phaseFile(outDir / ".blutter-phase", std::ios::trunc);
+			phaseFile << phase << "\n";
+			phaseFile.close();
+			return phaseFile.good();
+		};
+		if (!writePhase("load-info")) {
+			std::cerr << "Failed to write analysis phase\n";
+			return 1;
+		}
 
 		DartApp app{ libappPath.c_str() };
 		std::cout << std::format("libapp is loaded at {:#x}\n", app.base());
@@ -36,11 +47,19 @@ int main(int argc, char** argv)
 
 		app.EnterScope();
 #ifndef NO_CODE_ANALYSIS
+		if (!writePhase("analysis")) {
+			std::cerr << "Failed to write analysis phase\n";
+			return 1;
+		}
 		std::cout << "Analyzing the application\n";
 		CodeAnalyzer analyzer{ app };
 		analyzer.AnalyzeAll();
 #endif
 
+		if (!writePhase("dump")) {
+			std::cerr << "Failed to write analysis phase\n";
+			return 1;
+		}
 		DartDumper dumper{ app };
 		std::cout << "Dumping Object Pool\n";
 		dumper.DumpObjectPool((outDir / "pp.txt").string().c_str());
@@ -58,6 +77,13 @@ int main(int argc, char** argv)
 		fwriter.Create((outDir / "blutter_frida.js").string().c_str());
 
 		app.ExitScope();
+		std::ofstream completeFile(outDir / ".blutter-complete", std::ios::trunc);
+		completeFile << "ok\n";
+		completeFile.close();
+		if (!completeFile.good()) {
+			std::cerr << "Failed to write completion marker\n";
+			return 1;
+		}
 	}
 	catch (args::Help&) {
 		std::cout << parser;
