@@ -12,7 +12,6 @@ struct LibAppInfo {
 class ElfHelper final
 {
 public:
-	static LibAppInfo findSnapshots(const uint8_t* elf);
 	static LibAppInfo MapLibAppSo(const char* path);
 
 private:
