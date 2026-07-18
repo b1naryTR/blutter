@@ -311,7 +311,7 @@ struct VarItem {
 	VarValue* Value() const { return val.get(); }
 	std::unique_ptr<VarValue> TakeValue() { return std::move(val); }
 	std::string ValueString() const { return val ? val->ToString() : "BUG_NO_ASSIGN_VALUE"; }
-	ValueType ValueTypeId() const { return val ? val->RawTypeId() : dart::kIllegalCid; }
+	ValueType ValueTypeId() const { return val->RawTypeId(); }
 	VarItem* MoveTo(VarStorage storage) { return new VarItem(storage, std::move(val)); }
 	VarItem* MoveTo(A64::Register reg) { return new VarItem(VarStorage::NewRegister(reg), std::move(val)); }
 

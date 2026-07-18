@@ -1,3 +1,4 @@
+import hashlib
 import mmap
 import os
 import shutil
@@ -44,7 +45,19 @@ class DartLibInfo:
             self.has_compressed_ptrs = os_name != 'ios'
         else:
             self.has_compressed_ptrs = has_compressed_ptrs
-        self.lib_name = f'dartvm{version}_{os_name}_{arch}'
+        snapshot_identity = snapshot_hash if snapshot_hash is not None else 'default'
+        snapshot_key = hashlib.sha256(snapshot_identity.encode('utf-8')).hexdigest()[:16]
+        pointer_key = 'compressed' if self.has_compressed_ptrs else 'uncompressed'
+        self.lib_suffix = f'_{pointer_key}_{snapshot_key}'
+        self.lib_name = f'dartvm{version}_{os_name}_{arch}{self.lib_suffix}'
+
+
+def dartlib_cache_paths(info: DartLibInfo):
+    if os.name == 'nt':
+        library = os.path.join(SCRIPT_DIR, 'packages', 'lib', info.lib_name + '.lib')
+    else:
+        library = os.path.join(SCRIPT_DIR, 'packages', 'lib', 'lib' + info.lib_name + '.a')
+    return library, library + '.complete'
 
 
 def checkout_dart(info: DartLibInfo):
@@ -97,26 +110,29 @@ def checkout_dart(info: DartLibInfo):
                             f.write(content)
             # make version
             subprocess.run([sys.executable, 'tools/make_version.py', '--output', 'runtime/vm/version.cc', '--input', 'runtime/vm/version_in.cc'], cwd=clonedir, check=True)
-        else:
-            subprocess.run([sys.executable, MAKE_VERSION_FILE, clonedir, info.snapshot_hash], check=True)
+    # Different Flutter engine builds can report the same Dart semantic
+    # version with a different snapshot hash. Refresh version.cc before each
+    # matching build; the compiled-library cache is keyed by this hash below.
+    if info.snapshot_hash is not None:
+        subprocess.run([sys.executable, MAKE_VERSION_FILE, clonedir, info.snapshot_hash], check=True)
         
-        if sys.platform == 'win32':
-            # since Dart 3.8, RUNTIME_FUNCTION is declared when DART_HOST_OS_WINDOWS and TARGET_ARCH_ARM64 are set
-            # patch "runtime/platform/unwinding_records.h" to remove the declaration
-            vers = info.version.split('.', 2)
-            if int(vers[0]) >= 3 and int(vers[1]) >= 8:
-                with open(os.path.join(clonedir, 'runtime', 'platform', 'unwinding_records.h'), 'r+b') as f:
-                    mm = mmap.mmap(f.fileno(), 0)
-                    pos = mm.find(b'\n#if !defined(DART_HOST_OS_WINDOWS) || !defined(HOST_ARCH_ARM64)')
+    if sys.platform == 'win32':
+        # since Dart 3.8, RUNTIME_FUNCTION is declared when DART_HOST_OS_WINDOWS and TARGET_ARCH_ARM64 are set
+        # patch "runtime/platform/unwinding_records.h" to remove the declaration
+        vers = info.version.split('.', 2)
+        if int(vers[0]) >= 3 and int(vers[1]) >= 8:
+            with open(os.path.join(clonedir, 'runtime', 'platform', 'unwinding_records.h'), 'r+b') as f:
+                mm = mmap.mmap(f.fileno(), 0)
+                pos = mm.find(b'\n#if !defined(DART_HOST_OS_WINDOWS) || !defined(HOST_ARCH_ARM64)')
+                if pos != -1:
+                    # replace "||" with "//" to comment out "!defined(HOST_ARCH_ARM64)"
+                    mm[pos+36:pos+38] = b'//'
+                else:
+                    # newer Dart version use static_assert for checking RUNTIME_FUNCTION size, comment out that line
+                    pos = mm.find(b'\nstatic_assert(sizeof(')
                     if pos != -1:
-                        # replace "||" with "//" to comment out "!defined(HOST_ARCH_ARM64)"
-                        mm[pos+36:pos+38] = b'//'
-                    else:
-                        # newer Dart version use static_assert for checking RUNTIME_FUNCTION size, comment out that line
-                        pos = mm.find(b'\nstatic_assert(sizeof(')
-                        if pos != -1:
-                            mm[pos+1:pos+3] = b'//'
-    
+                        mm[pos+1:pos+3] = b'//'
+
     return clonedir
 
 def cmake_dart(info: DartLibInfo, target_dir: str):
@@ -149,10 +165,11 @@ def cmake_dart(info: DartLibInfo, target_dir: str):
     # cmake -GNinja -Bout3.0.3 -DCMAKE_BUILD_TYPE=Release
     #   add -DTARGET_ARCH=x64 for analyzing x64 libapp.so
     #   add -DTARGET_OS=ios for analyzing ios App
-    # Note: pointer compression feature is set from Flutter and no one change it when building app.
-    #       so only one build of Dart runtime is enough
+    # Snapshot hash and pointer mode are part of lib_name so incompatible
+    # runtimes never share a CMake build or installed archive.
     builddir = os.path.join(BUILD_DIR, info.lib_name)
-    subprocess.run([CMAKE_CMD, '-GNinja', '-B', builddir, f'-DTARGET_OS={info.os_name}', f'-DTARGET_ARCH={info.arch}', 
+    subprocess.run([CMAKE_CMD, '-GNinja', '-B', builddir, f'-DTARGET_OS={info.os_name}', f'-DTARGET_ARCH={info.arch}',
+        f'-DLIB_NAME_SUFFIX={info.lib_suffix}',
         f'-DCOMPRESSED_PTRS={1 if info.has_compressed_ptrs else 0}', '-DCMAKE_BUILD_TYPE=Release', '--log-level=NOTICE'], 
         cwd=target_dir, check=True)
     
@@ -161,8 +178,19 @@ def cmake_dart(info: DartLibInfo, target_dir: str):
     subprocess.run([CMAKE_CMD, '--install', '.'], cwd=builddir, check=True)
 
 def fetch_and_build(info: DartLibInfo):
+    library, complete_marker = dartlib_cache_paths(info)
+    try:
+        os.remove(complete_marker)
+    except FileNotFoundError:
+        pass
     outdir = checkout_dart(info)
     cmake_dart(info, outdir)
+    if not os.path.isfile(library):
+        raise RuntimeError('Dart VM build completed without installing ' + library)
+    marker_tmp = complete_marker + f'.{os.getpid()}.tmp'
+    with open(marker_tmp, 'w', encoding='utf-8') as f:
+        f.write(info.lib_name + '\n')
+    os.replace(marker_tmp, complete_marker)
 
 if __name__ == "__main__":
     ver = sys.argv[1]

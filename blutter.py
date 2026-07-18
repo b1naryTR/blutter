@@ -9,7 +9,7 @@ import subprocess
 import sys
 import zipfile
 import tempfile
-from dartvm_fetch_build import DartLibInfo
+from dartvm_fetch_build import DartLibInfo, dartlib_cache_paths
 
 CMAKE_CMD = "cmake"
 NINJA_CMD = "ninja"
@@ -168,11 +168,8 @@ def build_and_run(input: BlutterInput):
     if not os.path.isfile(input.blutter_file) or input.rebuild_blutter:
         # before fetch and build, check the existence of compiled library first
         #   so the src and build directories can be deleted
-        if os.name == 'nt':
-            dartlib_file = os.path.join(PKG_LIB_DIR, input.dart_info.lib_name+'.lib')
-        else:
-            dartlib_file = os.path.join(PKG_LIB_DIR, 'lib'+input.dart_info.lib_name+'.a')
-        if not os.path.isfile(dartlib_file):
+        dartlib_file, complete_marker = dartlib_cache_paths(input.dart_info)
+        if not os.path.isfile(dartlib_file) or not os.path.isfile(complete_marker):
             from dartvm_fetch_build import fetch_and_build
             fetch_and_build(input.dart_info)
         
@@ -209,6 +206,17 @@ def build_and_run(input: BlutterInput):
         # execute blutter    
         subprocess.run([input.blutter_file, '-i', input.libapp_path, '-o', input.outdir], check=True)
 
+def subprocess_failure_exit_code(returncode: int):
+    """Preserve a failed child process status across the Python launcher."""
+    if os.name != 'nt' and returncode < 0:
+        signal_number = -returncode
+        if signal_number < 128:
+            return 128 + signal_number
+    if 0 < returncode < 256:
+        return returncode
+    return 1
+
+
 def main_no_flutter(libapp_path: str, dart_version: str, outdir: str, rebuild_blutter: bool, create_vs_sln: bool, no_analysis: bool):
     version, os_name, arch = dart_version.split('_')
     dart_info = DartLibInfo(version, os_name, arch)
@@ -244,7 +252,10 @@ if __name__ == "__main__":
     parser.add_argument('--dart-version', help='Run without libflutter (indir become libapp.so) by specify dart version such as "3.4.2_android_arm64"')
     args = parser.parse_args()
 
-    if args.dart_version is None:
-        main(args.indir, args.outdir, args.rebuild, args.vs_sln, args.no_analysis)
-    else:
-        main_no_flutter(args.indir, args.dart_version, args.outdir, args.rebuild, args.vs_sln, args.no_analysis)
+    try:
+        if args.dart_version is None:
+            main(args.indir, args.outdir, args.rebuild, args.vs_sln, args.no_analysis)
+        else:
+            main_no_flutter(args.indir, args.dart_version, args.outdir, args.rebuild, args.vs_sln, args.no_analysis)
+    except subprocess.CalledProcessError as exc:
+        sys.exit(subprocess_failure_exit_code(exc.returncode))
