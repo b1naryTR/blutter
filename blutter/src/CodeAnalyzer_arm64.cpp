@@ -1613,6 +1613,8 @@ void FunctionAnalyzer::handleArgumentsDescriptorTypeArguments(AsmIterator& insn)
 		++insn;
 
 		const auto objPoolInstr = getObjectPoolInstruction(insn);
+		INSN_ASSERT(objPoolInstr.IsSet());
+		INSN_ASSERT(objPoolInstr.item.Value() != nullptr);
 		INSN_ASSERT(objPoolInstr.item.ValueTypeId() == dart::kTypeArgumentsCid);
 		// TODO: make this function type parameter to extends from this value
 		//objPoolInstr.item.Get<VarTypeArgument>();
