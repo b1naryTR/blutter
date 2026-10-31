@@ -21,25 +21,135 @@ SDK_DIR = os.path.join(SCRIPT_DIR, 'dartsdk')
 BUILD_DIR = os.path.join(SCRIPT_DIR, 'build')
 
 
+# Measured on Dart 3.10 runtime/vm/object.cc (the heaviest translation unit)
+# with GCC 14 at -O3: ~510 MB peak by default, ~353 MB with the low-memory GC
+# parameters below. The estimates add margin for the other large units.
+DEFAULT_JOB_MB = 600
+LOW_MEMORY_JOB_MB = 420
+DEFAULT_BUILD_RESERVE_MB = 1024
+
+# Make GCC's garbage collector run far more often. This costs roughly a third
+# more CPU time per translation unit, cuts its peak memory by about a third,
+# and has no effect on the generated code.
+GCC_LOW_MEMORY_FLAGS = '--param ggc-min-expand=20 --param ggc-min-heapsize=32768'
+
+
+def _env_positive_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, '').strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f'{name} must be a positive integer, got {raw!r}') from None
+    if value < 1:
+        raise ValueError(f'{name} must be a positive integer, got {raw!r}')
+    return value
+
+
+def low_memory_build() -> bool:
+    return os.environ.get('BLUTTER_BUILD_LOW_MEMORY', '').strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _read_int(path: str):
+    try:
+        with open(path) as f:
+            raw = f.read().strip()
+    except OSError:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def available_memory_mb():
+    """Memory a build may use now: host MemAvailable, further limited by
+    this cgroup's own headroom when it has a memory limit. None if unknown."""
+    available = None
+    try:
+        with open('/proc/meminfo') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    available = int(line.split()[1]) // 1024
+                    break
+    except (OSError, ValueError, IndexError):
+        pass
+
+    limit = _read_int('/sys/fs/cgroup/memory.max')
+    current = _read_int('/sys/fs/cgroup/memory.current')
+    if limit is not None and current is not None:
+        # memory.current counts reclaimable file cache; give it back.
+        reclaimable = 0
+        try:
+            with open('/sys/fs/cgroup/memory.stat') as f:
+                for line in f:
+                    if line.startswith('inactive_file '):
+                        reclaimable = int(line.split()[1])
+                        break
+        except (OSError, ValueError, IndexError):
+            pass
+        headroom = max(0, limit - current + reclaimable) // (1024 * 1024)
+        available = headroom if available is None else min(available, headroom)
+    return available
+
+
+def cpu_count() -> int:
+    if hasattr(os, 'sched_getaffinity'):
+        return max(1, len(os.sched_getaffinity(0)))
+    return max(1, os.cpu_count() or 1)
+
+
+def auto_build_jobs() -> int:
+    """As many jobs as there are CPUs, limited by the memory available when
+    the build starts after keeping BLUTTER_BUILD_RESERVE_MB in reserve."""
+    cpus = cpu_count()
+    available = available_memory_mb()
+    if available is None:
+        return cpus
+    per_job = _env_positive_int('BLUTTER_BUILD_JOB_MB',
+                                LOW_MEMORY_JOB_MB if low_memory_build() else DEFAULT_JOB_MB)
+    reserve = _env_positive_int('BLUTTER_BUILD_RESERVE_MB', DEFAULT_BUILD_RESERVE_MB)
+    return max(1, min(cpus, (available - reserve) // per_job))
+
+
 def ninja_command() -> list:
     """Return the ninja invocation used for every Blutter build.
 
     Ninja defaults to nproc+2 parallel compiler processes, and the Dart VM
     translation units are large enough that this parallelism dominates peak
-    memory. BLUTTER_BUILD_JOBS caps the number of concurrent jobs, trading
-    build time (once per Dart version) for a lower memory peak. Unset keeps
-    ninja's default.
+    memory. BLUTTER_BUILD_JOBS caps the number of concurrent jobs: a positive
+    integer is used as-is, and "auto" sizes it from free memory at build start
+    (see auto_build_jobs). Unset keeps ninja's default.
     """
     raw = os.environ.get('BLUTTER_BUILD_JOBS', '').strip()
     if not raw:
         return [NINJA_CMD]
-    try:
-        jobs = int(raw)
-    except ValueError:
-        raise ValueError(f'BLUTTER_BUILD_JOBS must be a positive integer, got {raw!r}') from None
-    if jobs < 1:
-        raise ValueError(f'BLUTTER_BUILD_JOBS must be a positive integer, got {raw!r}')
+    if raw.lower() == 'auto':
+        jobs = auto_build_jobs()
+        print(f'Building with {jobs} parallel jobs (BLUTTER_BUILD_JOBS=auto)', file=sys.stderr, flush=True)
+    else:
+        jobs = _env_positive_int('BLUTTER_BUILD_JOBS', 0)
     return [NINJA_CMD, '-j', str(jobs)]
+
+
+def _compiler_is_gcc(compiler: str) -> bool:
+    try:
+        out = subprocess.run([compiler, '--version'], capture_output=True, text=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return 'Free Software Foundation' in out and 'clang' not in out.lower()
+
+
+def cmake_low_memory_args(env=None) -> list:
+    """Extra CMake configure arguments for BLUTTER_BUILD_LOW_MEMORY. Only GCC
+    understands the GC parameters, so other compilers get nothing."""
+    if not low_memory_build():
+        return []
+    compiler = (env or os.environ).get('CXX') or 'c++'
+    if not _compiler_is_gcc(compiler):
+        return []
+    return [f'-DCMAKE_CXX_FLAGS={GCC_LOW_MEMORY_FLAGS}']
 
 #DART_GIT_URL = 'https://dart.googlesource.com/sdk.git'
 DART_GIT_URL = 'https://github.com/dart-lang/sdk.git'
@@ -201,7 +311,7 @@ def cmake_dart(info: DartLibInfo, target_dir: str):
     subprocess.run([CMAKE_CMD, '-GNinja', '-B', builddir, f'-DTARGET_OS={info.os_name}', f'-DTARGET_ARCH={info.arch}',
         f'-DLIB_NAME_SUFFIX={info.lib_suffix}',
         f'-DSHOREBIRD={1 if info.is_shorebird else 0}',
-        f'-DCOMPRESSED_PTRS={1 if info.has_compressed_ptrs else 0}', '-DCMAKE_BUILD_TYPE=Release', '--log-level=NOTICE'], 
+        f'-DCOMPRESSED_PTRS={1 if info.has_compressed_ptrs else 0}', '-DCMAKE_BUILD_TYPE=Release', '--log-level=NOTICE'] + cmake_low_memory_args(),
         cwd=target_dir, check=True)
     
     # build and install dart vm library to packages directory

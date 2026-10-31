@@ -4,7 +4,8 @@ import unittest
 from unittest import mock
 
 import blutter
-from dartvm_fetch_build import DartLibInfo, ninja_command
+import dartvm_fetch_build
+from dartvm_fetch_build import DartLibInfo, ninja_command, auto_build_jobs, cmake_low_memory_args
 from extract_dart_info import has_shorebird_markers
 from scripts.dartvm_patch_shorebird import patch_app_snapshot
 
@@ -40,6 +41,62 @@ class NinjaCommandTest(unittest.TestCase):
             with self.subTest(value=value), mock.patch.dict(os.environ, {"BLUTTER_BUILD_JOBS": value}):
                 with self.assertRaises(ValueError):
                     ninja_command()
+
+
+    def test_auto_sizes_jobs_from_memory(self):
+        with mock.patch.dict(os.environ, {"BLUTTER_BUILD_JOBS": "auto"}, clear=True), \
+                mock.patch.object(dartvm_fetch_build, "available_memory_mb", return_value=1024 + 3 * 600), \
+                mock.patch.object(dartvm_fetch_build, "cpu_count", return_value=8):
+            self.assertEqual(ninja_command(), ["ninja", "-j", "3"])
+
+
+class AutoBuildJobsTest(unittest.TestCase):
+    def run_auto(self, env, available, cpus=8):
+        with mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch.object(dartvm_fetch_build, "available_memory_mb", return_value=available), \
+                mock.patch.object(dartvm_fetch_build, "cpu_count", return_value=cpus):
+            return auto_build_jobs()
+
+    def test_never_exceeds_cpu_count(self):
+        self.assertEqual(self.run_auto({}, 100_000, cpus=8), 8)
+
+    def test_keeps_at_least_one_job_when_memory_is_short(self):
+        self.assertEqual(self.run_auto({}, 200), 1)
+
+    def test_low_memory_mode_fits_more_jobs(self):
+        available = 1024 + 2520
+        self.assertEqual(self.run_auto({}, available), 4)
+        self.assertEqual(self.run_auto({"BLUTTER_BUILD_LOW_MEMORY": "1"}, available), 6)
+
+    def test_honours_reserve_and_job_size_overrides(self):
+        env = {"BLUTTER_BUILD_RESERVE_MB": "500", "BLUTTER_BUILD_JOB_MB": "250"}
+        self.assertEqual(self.run_auto(env, 1500), 4)
+
+    def test_unknown_memory_uses_all_cpus(self):
+        self.assertEqual(self.run_auto({}, None, cpus=6), 6)
+
+
+class LowMemoryCmakeArgsTest(unittest.TestCase):
+    def test_disabled_by_default(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(cmake_low_memory_args(), [])
+
+    def test_passes_gc_params_to_gcc(self):
+        with mock.patch.dict(os.environ, {"BLUTTER_BUILD_LOW_MEMORY": "1"}, clear=True), \
+                mock.patch.object(dartvm_fetch_build, "_compiler_is_gcc", return_value=True):
+            self.assertEqual(cmake_low_memory_args(),
+                             ["-DCMAKE_CXX_FLAGS=" + dartvm_fetch_build.GCC_LOW_MEMORY_FLAGS])
+
+    def test_skips_non_gcc_compilers(self):
+        with mock.patch.dict(os.environ, {"BLUTTER_BUILD_LOW_MEMORY": "1"}, clear=True), \
+                mock.patch.object(dartvm_fetch_build, "_compiler_is_gcc", return_value=False):
+            self.assertEqual(cmake_low_memory_args(), [])
+
+    def test_uses_compiler_from_explicit_env(self):
+        with mock.patch.dict(os.environ, {"BLUTTER_BUILD_LOW_MEMORY": "1"}, clear=True), \
+                mock.patch.object(dartvm_fetch_build, "_compiler_is_gcc", return_value=False) as is_gcc:
+            cmake_low_memory_args({"CXX": "/opt/llvm/bin/clang++"})
+            is_gcc.assert_called_once_with("/opt/llvm/bin/clang++")
 
 
 class DartLibCacheIdentityTest(unittest.TestCase):

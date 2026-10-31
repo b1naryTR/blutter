@@ -9,7 +9,7 @@ import subprocess
 import sys
 import zipfile
 import tempfile
-from dartvm_fetch_build import DartLibInfo, dartlib_cache_paths, ninja_command
+from dartvm_fetch_build import DartLibInfo, dartlib_cache_paths, ninja_command, cmake_low_memory_args
 
 CMAKE_CMD = "cmake"
 NINJA_CMD = "ninja"
@@ -148,7 +148,7 @@ def cmake_blutter(input: BlutterInput):
             clang_file = os.path.join(llvm_path, 'bin', 'clang')
             my_env = {**os.environ, 'CC': clang_file, 'CXX': clang_file+'++'}
     # cmake -GNinja -Bbuild -DCMAKE_BUILD_TYPE=Release
-    subprocess.run([CMAKE_CMD, '-GNinja', '-B', builddir, f'-DDARTLIB={input.dart_info.lib_name}', f'-DNAME_SUFFIX={input.name_suffix}', '-DCMAKE_BUILD_TYPE=Release', '--log-level=NOTICE'] + macros, cwd=blutter_dir, check=True, env=my_env)
+    subprocess.run([CMAKE_CMD, '-GNinja', '-B', builddir, f'-DDARTLIB={input.dart_info.lib_name}', f'-DNAME_SUFFIX={input.name_suffix}', '-DCMAKE_BUILD_TYPE=Release', '--log-level=NOTICE'] + macros + cmake_low_memory_args(my_env), cwd=blutter_dir, check=True, env=my_env)
 
     # build and install blutter
     subprocess.run(ninja_command(), cwd=builddir, check=True)
