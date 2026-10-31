@@ -9,7 +9,7 @@ import subprocess
 import sys
 import zipfile
 import tempfile
-from dartvm_fetch_build import DartLibInfo, dartlib_cache_paths
+from dartvm_fetch_build import DartLibInfo, dartlib_cache_paths, ninja_command
 
 CMAKE_CMD = "cmake"
 NINJA_CMD = "ninja"
@@ -151,7 +151,7 @@ def cmake_blutter(input: BlutterInput):
     subprocess.run([CMAKE_CMD, '-GNinja', '-B', builddir, f'-DDARTLIB={input.dart_info.lib_name}', f'-DNAME_SUFFIX={input.name_suffix}', '-DCMAKE_BUILD_TYPE=Release', '--log-level=NOTICE'] + macros, cwd=blutter_dir, check=True, env=my_env)
 
     # build and install blutter
-    subprocess.run([NINJA_CMD], cwd=builddir, check=True)
+    subprocess.run(ninja_command(), cwd=builddir, check=True)
     subprocess.run([CMAKE_CMD, '--install', '.'], cwd=builddir, check=True)
 
 def get_dart_lib_info(libapp_path: str, libflutter_path: str) -> DartLibInfo:

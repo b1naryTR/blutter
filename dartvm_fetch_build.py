@@ -20,6 +20,27 @@ PATCH_SHOREBIRD_FILE = os.path.join(SCRIPT_DIR, 'scripts', 'dartvm_patch_shorebi
 SDK_DIR = os.path.join(SCRIPT_DIR, 'dartsdk')
 BUILD_DIR = os.path.join(SCRIPT_DIR, 'build')
 
+
+def ninja_command() -> list:
+    """Return the ninja invocation used for every Blutter build.
+
+    Ninja defaults to nproc+2 parallel compiler processes, and the Dart VM
+    translation units are large enough that this parallelism dominates peak
+    memory. BLUTTER_BUILD_JOBS caps the number of concurrent jobs, trading
+    build time (once per Dart version) for a lower memory peak. Unset keeps
+    ninja's default.
+    """
+    raw = os.environ.get('BLUTTER_BUILD_JOBS', '').strip()
+    if not raw:
+        return [NINJA_CMD]
+    try:
+        jobs = int(raw)
+    except ValueError:
+        raise ValueError(f'BLUTTER_BUILD_JOBS must be a positive integer, got {raw!r}') from None
+    if jobs < 1:
+        raise ValueError(f'BLUTTER_BUILD_JOBS must be a positive integer, got {raw!r}')
+    return [NINJA_CMD, '-j', str(jobs)]
+
 #DART_GIT_URL = 'https://dart.googlesource.com/sdk.git'
 DART_GIT_URL = 'https://github.com/dart-lang/sdk.git'
 
@@ -184,7 +205,7 @@ def cmake_dart(info: DartLibInfo, target_dir: str):
         cwd=target_dir, check=True)
     
     # build and install dart vm library to packages directory
-    subprocess.run([NINJA_CMD], cwd=builddir, check=True)
+    subprocess.run(ninja_command(), cwd=builddir, check=True)
     subprocess.run([CMAKE_CMD, '--install', '.'], cwd=builddir, check=True)
 
 def fetch_and_build(info: DartLibInfo):

@@ -4,7 +4,7 @@ import unittest
 from unittest import mock
 
 import blutter
-from dartvm_fetch_build import DartLibInfo
+from dartvm_fetch_build import DartLibInfo, ninja_command
 from extract_dart_info import has_shorebird_markers
 from scripts.dartvm_patch_shorebird import patch_app_snapshot
 
@@ -19,6 +19,27 @@ class SubprocessFailureExitCodeTest(unittest.TestCase):
 
     def test_rejects_unrepresentable_status(self):
         self.assertEqual(blutter.subprocess_failure_exit_code(256), 1)
+
+
+
+class NinjaCommandTest(unittest.TestCase):
+    def test_unset_keeps_ninja_default_parallelism(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(ninja_command(), ["ninja"])
+
+    def test_blank_keeps_ninja_default_parallelism(self):
+        with mock.patch.dict(os.environ, {"BLUTTER_BUILD_JOBS": " "}):
+            self.assertEqual(ninja_command(), ["ninja"])
+
+    def test_caps_parallel_jobs(self):
+        with mock.patch.dict(os.environ, {"BLUTTER_BUILD_JOBS": "2"}):
+            self.assertEqual(ninja_command(), ["ninja", "-j", "2"])
+
+    def test_rejects_invalid_job_count(self):
+        for value in ("0", "-1", "two"):
+            with self.subTest(value=value), mock.patch.dict(os.environ, {"BLUTTER_BUILD_JOBS": value}):
+                with self.assertRaises(ValueError):
+                    ninja_command()
 
 
 class DartLibCacheIdentityTest(unittest.TestCase):
