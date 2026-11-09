@@ -130,6 +130,14 @@ def find_compat_macro(dart_version: str, no_analysis: bool):
         if mm.find(b'AsTruncatedInt64Value()') == -1:
             macros.append('-DUNIFORM_INTEGER_ACCESS=1')
     
+    with open(os.path.join(vm_path, 'raw_object.h'), 'rb') as f:
+        mm = mmap.mmap(f.fileno(), 0, access = mmap.ACCESS_READ)
+        # Dart 3.13: Closure became a variable length object. The fixed context,
+        # delayed/instantiator/function type arguments fields are replaced by
+        # "elements" whose layout depends on the closure function.
+        if mm.find(b'COMPRESSED_VARIABLE_POINTER_FIELDS(ObjectPtr, element, data, function)') != -1:
+            macros.append('-DVARIABLE_LENGTH_CLOSURE=1')
+
     if no_analysis:
         macros.append('-DNO_CODE_ANALYSIS=1')
     

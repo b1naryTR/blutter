@@ -6,6 +6,60 @@
 #include <source_location>
 #include <unordered_set>
 
+#ifdef VARIABLE_LENGTH_CLOSURE
+// Dart 3.13+: a Closure is [length_and_flags][hash][function] followed by
+// variable length elements, in order: delayed type arguments (generic closure),
+// instantiator type arguments, parent function type arguments, then captured
+// context/values. See UntaggedClosure and Slot::GetClosureContextSlot().
+static constexpr intptr_t closureElementOffset(intptr_t index)
+{
+	return AOT_Closure_elements_start_offset + index * dart::kCompressedWordSize;
+}
+
+// exact element index of the closure context, or -1 when AOT dropped the signature
+static intptr_t closureContextIndex(const DartFunction* fn)
+{
+	const auto& func = dart::Function::Handle(fn->Ptr());
+	if (func.IsNull() || !func.IsClosureFunction())
+		return -1;
+	const auto sigPtr = func.signature();
+	if (!sigPtr.IsHeapObject())
+		return -1;
+	return dart::UntaggedClosure::ContextIndex(
+		dart::Closure::HasDelayedTypeArgumentsField(func),
+		dart::Closure::HasInstantiatorTypeArgumentsField(func),
+		dart::Closure::HasFunctionTypeArgumentsField(func));
+}
+
+static bool isClosureContextLoad(const DartFunction* fn, int64_t disp)
+{
+	const auto idx = closureContextIndex(fn);
+	if (idx >= 0)
+		return disp == closureElementOffset(idx) - dart::kHeapObjectTag;
+	// signature is dropped: at most 3 type argument slots precede the context
+	for (intptr_t i = 0; i <= 3; i++) {
+		if (disp == closureElementOffset(i) - dart::kHeapObjectTag)
+			return true;
+	}
+	return false;
+}
+
+static constexpr intptr_t closureDelayedTypeArgumentsOffset()
+{
+	return closureElementOffset(dart::UntaggedClosure::kDelayedTypeArgumentsIndex);
+}
+#else
+static bool isClosureContextLoad(const DartFunction*, int64_t disp)
+{
+	return disp == AOT_Closure_context_offset - dart::kHeapObjectTag;
+}
+
+static constexpr intptr_t closureDelayedTypeArgumentsOffset()
+{
+	return AOT_Closure_delayed_type_arguments_offset;
+}
+#endif
+
 #ifndef NO_CODE_ANALYSIS
 
 // auto revert ASM iterator to the current when pattern does not match or an exception occurs
@@ -2003,7 +2057,7 @@ std::unique_ptr<SetupParametersInstr> FunctionAnalyzer::processPrologueParameter
 
 	// PrologueBuilder::BuildClosureContextHandling()
 	// closure context handling
-	if (dartFn->IsClosure() && insn.id() == ARM64_INS_LDUR && insn.ops(1).mem.disp == AOT_Closure_context_offset - dart::kHeapObjectTag) {
+	if (dartFn->IsClosure() && insn.id() == ARM64_INS_LDUR && isClosureContextLoad(dartFn, insn.ops(1).mem.disp)) {
 		const auto arg1Reg = [&] {
 			if (fnInfo->params.numFixedParam > 0) {
 				return fnInfo->params[0].valReg;
@@ -2052,7 +2106,22 @@ std::unique_ptr<SetupParametersInstr> FunctionAnalyzer::processPrologueParameter
 				a1reg = insn.ops(0).reg;
 				++insn;
 			}
-			if (insn.id() == ARM64_INS_LDUR && insn.ops(1).mem.disp == AOT_Closure_delayed_type_arguments_offset - dart::kHeapObjectTag) {
+			if (insn.id() == ARM64_INS_LDUR && insn.ops(1).mem.disp == closureDelayedTypeArgumentsOffset() - dart::kHeapObjectTag) {
+#ifdef VARIABLE_LENGTH_CLOSURE
+				// element 0 is also the context slot of a non-generic closure, so
+				// require the "delayed == empty_type_arguments" test that follows
+				{
+					const auto cur = insn.Current();
+					const auto dst = insn.ops(0).reg;
+					++insn;
+					handleExtraDecompressPointer(insn, dst);
+					const bool isDelayedTest = insn.id() == ARM64_INS_LDR && insn.ops(1).mem.base == CSREG_DART_THR &&
+						insn.ops(1).mem.disp == dart::Thread::empty_type_arguments_offset();
+					insn.SetCurrent(cur);
+					if (!isDelayedTest)
+						return A64::Register{};
+				}
+#endif
 				if (a1reg != ARM64_REG_INVALID) {
 					// TODO: calculate a number of function parameter
 					return A64::Register{ a1reg };

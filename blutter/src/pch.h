@@ -37,6 +37,14 @@ PRAGMA_WARNING(push, 0)
 #include <vm/compiler/runtime_offsets_extracted.h>
 PRAGMA_WARNING(pop)
 
+// Dart 3.13 removed the separate VM snapshot. An AOT app exports a single
+// _kDartSnapshotData/_kDartSnapshotText pair that is passed straight to
+// Dart_CreateIsolateGroup, and Dart_InitializeParams lost its vm_snapshot_*
+// fields. Key off the header so no build flag is needed.
+#if defined(kSnapshotDataAsmSymbol) && !defined(kVmSnapshotDataAsmSymbol)
+#define DART_SINGLE_SNAPSHOT 1
+#endif
+
 #ifdef OLD_MAP_SET_NAME
 namespace dart {
 	using Map = LinkedHashMap;

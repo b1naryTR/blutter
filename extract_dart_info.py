@@ -31,13 +31,26 @@ def is_shorebird_engine(libflutter_file: str) -> bool:
         return rodata is not None and b'Print shorebird information' in rodata.data()
 
 
+# Snapshot data symbols, newest layout last. Since Dart 3.13 the VM snapshot is
+# gone and an AOT app exports a single "_kDartSnapshotData" whose header has the
+# same layout (magic, length, kind, version hash, features).
+SNAPSHOT_DATA_SYMBOLS = ('_kDartVmSnapshotData', '_kDartSnapshotData')
+
+
+def find_snapshot_data_symbol(dynsym):
+    for name in SNAPSHOT_DATA_SYMBOLS:
+        syms = dynsym.get_symbol_by_name(name)
+        if syms:
+            return syms[0]
+    raise ValueError('no Dart snapshot data symbol found (' + ', '.join(SNAPSHOT_DATA_SYMBOLS) + ')')
+
+
 # TODO: support both ELF and Mach-O file
 def extract_snapshot_hash_flags(libapp_file):
     with open(libapp_file, 'rb') as f:
         elf = ELFFile(f)
-        # find "_kDartVmSnapshotData" symbol
         dynsym = elf.get_section_by_name('.dynsym')
-        sym = dynsym.get_symbol_by_name('_kDartVmSnapshotData')[0]
+        sym = find_snapshot_data_symbol(dynsym)
         #section = elf.get_section(sym['st_shndx'])
         assert sym['st_size'] > 128
         f.seek(sym['st_value']+20)

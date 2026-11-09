@@ -180,8 +180,12 @@ static SnapshotOffsets findSnapshotOffsets(const uint8_t* elf, size_t elfSize)
 			// we want only .dynstr for .dynsym
 			const char* strtab = (const char*)elf + section->file_offset;
 			const char* last = strtab + section->file_size;
+#ifdef DART_SINGLE_SNAPSHOT
+			const char* s_first = kSnapshotDataAsmSymbol;
+#else
 			const char* s_first = kVmSnapshotDataAsmSymbol;
-			const char* s_last = s_first + strlen(kVmSnapshotDataAsmSymbol) + 1;
+#endif
+			const char* s_last = s_first + strlen(s_first) + 1;
 			//if (memmem(strtab, section->s_size, kVmSnapshotDataAsmSymbol, strlen(kVmSnapshotDataAsmSymbol))) {
 			if (std::search(strtab, last, s_first, s_last) != last) {
 				// found it
@@ -212,6 +216,15 @@ static SnapshotOffsets findSnapshotOffsets(const uint8_t* elf, size_t elfSize)
 			throw std::invalid_argument("ELF: Invalid dynamic symbol name");
 
 		const char* name = dynstr + dynsym->name;
+#ifdef DART_SINGLE_SNAPSHOT
+		// single app snapshot: it plays the role of the old isolate snapshot
+		if (strcmp(name, kSnapshotDataAsmSymbol) == 0) {
+			offsets.isolate_snapshot_data = { dynsym->value, dynsym->size, true };
+		}
+		else if (strcmp(name, kSnapshotTextAsmSymbol) == 0) {
+			offsets.isolate_snapshot_instructions = { dynsym->value, dynsym->size, true };
+		}
+#else
 		if (strcmp(name, kVmSnapshotDataAsmSymbol) == 0) {
 			offsets.vm_snapshot_data = { dynsym->value, dynsym->size, true };
 		}
@@ -224,12 +237,15 @@ static SnapshotOffsets findSnapshotOffsets(const uint8_t* elf, size_t elfSize)
 		else if (strcmp(name, kIsolateSnapshotInstructionsAsmSymbol) == 0) {
 			offsets.isolate_snapshot_instructions = { dynsym->value, dynsym->size, true };
 		}
+#endif
 	}
 
+#ifndef DART_SINGLE_SNAPSHOT
 	if (!offsets.vm_snapshot_data.found)
 		throw std::invalid_argument("ELF: Cannot find Dart VM Snapshot Data");
 	if (!offsets.vm_snapshot_instructions.found)
 		throw std::invalid_argument("ELF: Cannot find Dart VM Snapshot Instructions");
+#endif
 	if (!offsets.isolate_snapshot_data.found)
 		throw std::invalid_argument("ELF: Cannot find Dart Isolate Snapshot Data");
 	if (!offsets.isolate_snapshot_instructions.found)
@@ -325,16 +341,18 @@ LibAppInfo ElfHelper::MapLibAppSo(const char* path)
 			}
 			throw std::invalid_argument("ELF: Snapshot symbol is outside a load segment");
 		};
+#ifndef DART_SINGLE_SNAPSHOT
 		checkSnapshotLocation(offsets.vm_snapshot_data);
 		checkSnapshotLocation(offsets.vm_snapshot_instructions);
+#endif
 		checkSnapshotLocation(offsets.isolate_snapshot_data);
 		checkSnapshotLocation(offsets.isolate_snapshot_instructions);
 
 		if (canUseFileMapping && imageSize64 <= file.size) {
 			return LibAppInfo{
 				.lib = elf,
-				.vm_snapshot_data = elf + offsets.vm_snapshot_data.offset,
-				.vm_snapshot_instructions = elf + offsets.vm_snapshot_instructions.offset,
+				.vm_snapshot_data = offsets.vm_snapshot_data.found ? elf + offsets.vm_snapshot_data.offset : nullptr,
+				.vm_snapshot_instructions = offsets.vm_snapshot_instructions.found ? elf + offsets.vm_snapshot_instructions.offset : nullptr,
 				.isolate_snapshot_data = elf + offsets.isolate_snapshot_data.offset,
 				.isolate_snapshot_instructions = elf + offsets.isolate_snapshot_instructions.offset,
 			};
@@ -362,8 +380,8 @@ LibAppInfo ElfHelper::MapLibAppSo(const char* path)
 		unmap_file(file);
 		return LibAppInfo{
 			.lib = image,
-			.vm_snapshot_data = image + offsets.vm_snapshot_data.offset,
-			.vm_snapshot_instructions = image + offsets.vm_snapshot_instructions.offset,
+			.vm_snapshot_data = offsets.vm_snapshot_data.found ? image + offsets.vm_snapshot_data.offset : nullptr,
+			.vm_snapshot_instructions = offsets.vm_snapshot_instructions.found ? image + offsets.vm_snapshot_instructions.offset : nullptr,
 			.isolate_snapshot_data = image + offsets.isolate_snapshot_data.offset,
 			.isolate_snapshot_instructions = image + offsets.isolate_snapshot_instructions.offset,
 		};

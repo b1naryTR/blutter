@@ -6,7 +6,7 @@ from unittest import mock
 import blutter
 import dartvm_fetch_build
 from dartvm_fetch_build import DartLibInfo, ninja_command, auto_build_jobs, cmake_low_memory_args
-from extract_dart_info import has_shorebird_markers
+from extract_dart_info import has_shorebird_markers, find_snapshot_data_symbol
 from scripts.dartvm_patch_shorebird import patch_app_snapshot
 
 
@@ -150,6 +150,50 @@ class ShorebirdSourcePatchTest(unittest.TestCase):
                 self.assertEqual(patched.count('const intptr_t last_cid'), 1)
                 self.assertEqual(patched.count('table->AllocateIndex(last_cid)'), 1)
                 self.assertEqual(patched.count('#if defined(DART_SHOREBIRD)'), 2)
+
+
+class _FakeDynsym:
+    def __init__(self, names):
+        self.names = names
+
+    def get_symbol_by_name(self, name):
+        return [name] if name in self.names else None
+
+
+class SnapshotSymbolTest(unittest.TestCase):
+    def test_prefers_vm_snapshot_data_before_dart_3_13(self):
+        dynsym = _FakeDynsym({'_kDartVmSnapshotData', '_kDartIsolateSnapshotData'})
+        self.assertEqual(find_snapshot_data_symbol(dynsym), '_kDartVmSnapshotData')
+
+    def test_uses_single_snapshot_data_since_dart_3_13(self):
+        dynsym = _FakeDynsym({'_kDartSnapshotData', '_kDartSnapshotText', '_kDartSnapshotBuildId'})
+        self.assertEqual(find_snapshot_data_symbol(dynsym), '_kDartSnapshotData')
+
+    def test_rejects_library_without_snapshot(self):
+        with self.assertRaises(ValueError):
+            find_snapshot_data_symbol(_FakeDynsym({'JNI_OnLoad'}))
+
+
+class CompatMacroTest(unittest.TestCase):
+    HEADERS = ('class_id.h', 'class_table.h', 'stub_code_list.h', 'object_store.h', 'object.h', 'raw_object.h')
+
+    def _macros(self, raw_object_h: bytes):
+        with tempfile.TemporaryDirectory() as directory:
+            vm_dir = os.path.join(directory, 'dartvm3.13.7', 'vm')
+            os.makedirs(vm_dir)
+            for name in self.HEADERS:
+                with open(os.path.join(vm_dir, name), 'wb') as f:
+                    f.write(raw_object_h if name == 'raw_object.h' else b'// placeholder\n')
+            with mock.patch.object(blutter, 'PKG_INC_DIR', directory):
+                return blutter.find_compat_macro('3.13.7', False)
+
+    def test_detects_variable_length_closure(self):
+        header = b'  COMPRESSED_VARIABLE_POINTER_FIELDS(ObjectPtr, element, data, function)\n'
+        self.assertIn('-DVARIABLE_LENGTH_CLOSURE=1', self._macros(header))
+
+    def test_fixed_closure_layout_has_no_macro(self):
+        header = b'  COMPRESSED_POINTER_FIELD(ContextPtr, context)\n'
+        self.assertNotIn('-DVARIABLE_LENGTH_CLOSURE=1', self._macros(header))
 
 
 if __name__ == "__main__":

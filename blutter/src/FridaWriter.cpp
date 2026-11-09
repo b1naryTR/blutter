@@ -115,7 +115,14 @@ void FridaWriter::Create(const char* filename)
 				of << "{id:" << dartCls->Id() << ",";
 				of << "name:\"Closure\",";
 				of << "fnOffset:" << AOT_Closure_function_offset << ",";
+#ifdef VARIABLE_LENGTH_CLOSURE
+				// Dart 3.13+: no fixed context field; captured values follow the
+				// optional type argument elements starting at elementsOffset
+				of << "contextOffset:" << AOT_Closure_elements_start_offset << ",";
+				of << "elementsOffset:" << AOT_Closure_elements_start_offset << ",";
+#else
 				of << "contextOffset:" << AOT_Closure_context_offset << ",";
+#endif
 				of << "epOffset:" << AOT_Closure_entry_point_offset << "},\n";
 				break;
 			case dart::kTypedDataUint8ArrayCid:

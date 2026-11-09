@@ -3,6 +3,103 @@
 #include "DartFnBase.h"
 #include <vm/stub_code_list.h>
 
+// Dart 3.13 merged the object store stubs into VM_STUB_CODE_LIST (served from
+// dart::Roots). Keep their historical "<name>Stub" kinds so the analyzer's
+// checks work unchanged; the loader fetches them with dart::StubCode::<name>().
+// This list is the Dart 3.12 OBJECT_STORE_STUB_CODE_LIST names that still exist
+// as 3.13 VM stubs (AllocateClosure* was replaced by AllocateClosure1..4).
+#if defined(OBJECT_STORE_STUB_CODE_LIST)
+#define BLUTTER_OBJECT_STORE_STUB_LIST(DO) OBJECT_STORE_STUB_CODE_LIST(DO)
+#else
+#define BLUTTER_MERGED_OBJECT_STORE_STUBS 1
+#define BLUTTER_OBJECT_STORE_STUB_LIST(DO) \
+	DO(_, DispatchTableNullError) \
+	DO(_, LateInitializationErrorSharedWithFPURegs) \
+	DO(_, LateInitializationErrorSharedWithoutFPURegs) \
+	DO(_, NullErrorSharedWithFPURegs) \
+	DO(_, NullErrorSharedWithoutFPURegs) \
+	DO(_, NullArgErrorSharedWithFPURegs) \
+	DO(_, NullArgErrorSharedWithoutFPURegs) \
+	DO(_, NullCastErrorSharedWithFPURegs) \
+	DO(_, NullCastErrorSharedWithoutFPURegs) \
+	DO(_, RangeErrorSharedWithFPURegs) \
+	DO(_, RangeErrorSharedWithoutFPURegs) \
+	DO(_, WriteErrorSharedWithFPURegs) \
+	DO(_, WriteErrorSharedWithoutFPURegs) \
+	DO(_, FieldAccessErrorSharedWithFPURegs) \
+	DO(_, FieldAccessErrorSharedWithoutFPURegs) \
+	DO(_, AllocateMintSharedWithFPURegs) \
+	DO(_, AllocateMintSharedWithoutFPURegs) \
+	DO(_, StackOverflowSharedWithFPURegs) \
+	DO(_, StackOverflowSharedWithoutFPURegs) \
+	DO(_, AllocateArray) \
+	DO(_, AllocateMint) \
+	DO(_, AllocateDouble) \
+	DO(_, AllocateFloat32x4) \
+	DO(_, AllocateFloat64x2) \
+	DO(_, AllocateInt32x4) \
+	DO(_, AllocateInt8Array) \
+	DO(_, AllocateUint8Array) \
+	DO(_, AllocateUint8ClampedArray) \
+	DO(_, AllocateInt16Array) \
+	DO(_, AllocateUint16Array) \
+	DO(_, AllocateInt32Array) \
+	DO(_, AllocateUint32Array) \
+	DO(_, AllocateInt64Array) \
+	DO(_, AllocateUint64Array) \
+	DO(_, AllocateFloat32Array) \
+	DO(_, AllocateFloat64Array) \
+	DO(_, AllocateFloat32x4Array) \
+	DO(_, AllocateInt32x4Array) \
+	DO(_, AllocateFloat64x2Array) \
+	DO(_, AllocateContext) \
+	DO(_, AllocateGrowableArray) \
+	DO(_, AllocateObject) \
+	DO(_, AllocateObjectParameterized) \
+	DO(_, AllocateRecord) \
+	DO(_, AllocateRecord2) \
+	DO(_, AllocateRecord2Named) \
+	DO(_, AllocateRecord3) \
+	DO(_, AllocateRecord3Named) \
+	DO(_, AllocateUnhandledException) \
+	DO(_, CallClosureNoSuchMethod) \
+	DO(_, CloneContext) \
+	DO(_, CheckIsolateFieldAccess) \
+	DO(_, DefaultTypeTest) \
+	DO(_, DefaultNullableTypeTest) \
+	DO(_, TopTypeTypeTest) \
+	DO(_, NullableTypeParameterTypeTest) \
+	DO(_, TypeParameterTypeTest) \
+	DO(_, UnreachableTypeTest) \
+	DO(_, SlowTypeTest) \
+	DO(_, WriteBarrierWrappers) \
+	DO(_, ArrayWriteBarrier) \
+	DO(_, Throw) \
+	DO(_, ReThrow) \
+	DO(_, InitStaticField) \
+	DO(_, InitLateStaticField) \
+	DO(_, InitLateFinalStaticField) \
+	DO(_, InitInstanceField) \
+	DO(_, InitLateInstanceField) \
+	DO(_, InitLateFinalInstanceField) \
+	DO(_, InitSharedLateStaticField) \
+	DO(_, Await) \
+	DO(_, AwaitWithTypeCheck) \
+	DO(_, CloneSuspendState) \
+	DO(_, FfiAsyncCallbackSend) \
+	DO(_, InitAsync) \
+	DO(_, Resume) \
+	DO(_, ReturnAsync) \
+	DO(_, ReturnAsyncNotFuture) \
+	DO(_, InitAsyncStar) \
+	DO(_, YieldAsyncStar) \
+	DO(_, ReturnAsyncStar) \
+	DO(_, InitSyncStar) \
+	DO(_, SuspendSyncStarAtStart) \
+	DO(_, SuspendSyncStarAtYield) \
+	DO(_, InstanceOf)
+#endif
+
 // forward declaration
 class DartAbstractType;
 
@@ -11,7 +108,7 @@ class DartStub : public DartFnBase
 public:
 	enum Kind : int32_t {
 #define DO(member, name) name ## Stub,
-		OBJECT_STORE_STUB_CODE_LIST(DO)
+		BLUTTER_OBJECT_STORE_STUB_LIST(DO)
 #undef DO
 		BuildNonGenericMethodExtractorStub,
 		BuildGenericMethodExtractorStub,

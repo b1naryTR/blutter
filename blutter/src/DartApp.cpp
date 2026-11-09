@@ -301,6 +301,21 @@ void DartApp::loadStubs(dart::ObjectStore* store)
 
 	// Note: some stub might contain multiple of duplicated stubs
 	// these stubs are called "_iso_stub_" in runtime/vm/stub_code.cc
+#ifdef BLUTTER_MERGED_OBJECT_STORE_STUBS
+	// Dart 3.13+: former object store stubs are VM stubs served from dart::Roots.
+	// A stub that is not part of the snapshot is null; skip it. Deduplicated
+	// stubs share an entry point, so keep the first kind seen.
+#define DO(member, name) \
+	ptr = dart::StubCode::name().ptr(); \
+	if (ptr != dart::Code::null()) { \
+		code = ptr; \
+		ep_addr = code.EntryPoint() - base(); \
+		if (!stubs.contains(ep_addr)) { \
+			stub = new DartStub(ptr, DartStub::name ## Stub, ep_addr, code.Size(), #name); \
+			stubs[ep_addr] = stub; \
+		} \
+	}
+#else
 #define DO(member, name) \
 	ptr = store->member(); \
 	code = ptr; \
@@ -308,21 +323,29 @@ void DartApp::loadStubs(dart::ObjectStore* store)
 	stub = new DartStub(ptr, DartStub::name ## Stub, ep_addr, code.Size(), #name); \
 	ASSERT(!stubs.contains(ep_addr)); \
 	stubs[ep_addr] = stub;
-	OBJECT_STORE_STUB_CODE_LIST(DO);
+#endif
+	BLUTTER_OBJECT_STORE_STUB_LIST(DO);
 #ifndef NO_METHOD_EXTRACTOR_STUB
 	DO(build_nongeneric_method_extractor_code, BuildNonGenericMethodExtractor);
 	DO(build_generic_method_extractor_code, BuildGenericMethodExtractor);
 #endif
 #undef DO
 	
+#ifdef BLUTTER_MERGED_OBJECT_STORE_STUBS
+	code = dart::StubCode::Throw().ptr();
+#else
 	code = store->throw_stub();
+#endif
 	throwStubAddr = code.EntryPoint();
 
 	// load VM stub code
 	// the dart entry point "static void main()" is a LazyCompileVMStub which call "main" stub (a real main)
+#ifndef BLUTTER_MERGED_OBJECT_STORE_STUBS
 	ASSERT(dart::StubCode::HasBeenInitialized());
-#define DO(name) {\
+#endif
+#define DO(name) do {\
 		const auto& code = dart::StubCode::name(); \
+		if (code.IsNull()) break; \
 		ep_addr = code.EntryPoint() - base(); \
 		if (stubs.contains(ep_addr)) { \
 			ASSERT(stubs[ep_addr]->Name() == #name); \
@@ -337,7 +360,7 @@ void DartApp::loadStubs(dart::ObjectStore* store)
 				functions.erase(it); \
 			} \
 		} \
-	}
+	} while (0);
 	VM_STUB_CODE_LIST(DO);
 #undef DO
 }
